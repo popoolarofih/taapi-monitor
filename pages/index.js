@@ -1,71 +1,76 @@
-import { useEffect, useState } from "react";
+import { useState, useEffect } from "react";
 import styles from "../styles/Home.module.css";
 
+const columns = [
+  { key: "sNo", label: "S/NO" },
+  { key: "symbol", label: "TOKEN (NAME)" },
+  { key: "rsi", label: "RSI" },
+  { key: "signal", label: "SIGNAL" },
+];
+
 export default function Home() {
-  const [tokens, setTokens] = useState([]);
+  const [data, setData] = useState([]);
   const [lastUpdate, setLastUpdate] = useState("");
   const [countdown, setCountdown] = useState(30);
-  const [location, setLocation] = useState("Locating...");
+  const [loc, setLoc] = useState("Locating...");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [sortKey, setSortKey] = useState("sNo");
+  const [asc, setAsc] = useState(true);
 
   const fetchSignals = async () => {
     setLoading(true);
     try {
       const res = await fetch("/api/signals");
-      const data = await res.json();
-
-      if (!Array.isArray(data)) {
-        console.error("Invalid response format:", data);
-        setError("Unexpected response from server.");
-        return;
-      }
-
-      setTokens(data);
+      const json = await res.json();
+      if (!Array.isArray(json)) throw new Error("Invalid response format");
+      setData(json);
       setLastUpdate(new Date().toLocaleTimeString());
       setError("");
-    } catch (err) {
-      console.error("Failed to fetch signals:", err);
-      setError("Unable to load signals.");
+    } catch (e) {
+      console.error(e);
+      setError("Error loading signals");
     } finally {
       setLoading(false);
       setCountdown(30);
     }
   };
 
-  const fetchLocation = async () => {
-    try {
-      const res = await fetch("https://ipapi.co/json/");
-      const data = await res.json();
-      if (data.error) throw new Error(data.reason || "Unknown");
-      setLocation(`${data.city}, ${data.country_name}`);
-    } catch {
-      setLocation("Location unavailable");
-    }
-  };
-
   useEffect(() => {
     fetchSignals();
-    fetchLocation();
+    fetch("https://ipapi.co/json/")
+      .then((r) => r.json())
+      .then((d) => setLoc(`${d.city}, ${d.country_name}`))
+      .catch(() => setLoc("Unavailable"));
 
-    const interval = setInterval(fetchSignals, 30000);
-    const countdownInterval = setInterval(() => {
-      setCountdown((c) => (c > 0 ? c - 1 : 30));
-    }, 1000);
+    const intv = setInterval(fetchSignals, 30000);
+    const cntd = setInterval(() => setCountdown((c) => (c > 0 ? c - 1 : 30)), 1000);
 
     return () => {
-      clearInterval(interval);
-      clearInterval(countdownInterval);
+      clearInterval(intv);
+      clearInterval(cntd);
     };
   }, []);
 
-  const getSignalClass = (signal) => {
-    if (signal === "Buy") return styles.signalBuy;
-    if (signal === "Sell") return styles.signalSell;
-    if (signal === "Exit Buy" || signal === "Exit Sell")
-      return styles.signalExit;
-    return styles.signalHold;
-  };
+  const getCls = (sig) =>
+    sig === "Buy"
+      ? styles.signalBuy
+      : sig === "Sell"
+      ? styles.signalSell
+      : sig.startsWith("Exit")
+      ? styles.signalExit
+      : styles.signalHold;
+
+  const sortData = () =>
+    [...data].sort((a, b) => {
+      const v1 = a[sortKey];
+      const v2 = b[sortKey];
+      if (v1 < v2) return asc ? -1 : 1;
+      if (v1 > v2) return asc ? 1 : -1;
+      return 0;
+    });
+
+  const sorted = sortData();
 
   return (
     <div className={styles.container}>
@@ -73,37 +78,48 @@ export default function Home() {
         <h1 className={styles.title}>Most Volatile Binance</h1>
         <div className={styles.meta}>
           <p>Next update in: {countdown}s</p>
-          <p>Last updated: {lastUpdate || "..."}</p>
-          <p>User Location: {location}</p>
+          <p>Last updated: {lastUpdate || "…"}</p>
+          <p>User Location: {loc}</p>
         </div>
       </div>
-
-      {error && <p className={styles.error}>{error}</p>}
-
+      {error && <div className={styles.error}>{error}</div>}
       {loading ? (
-        <p className={styles.loading}>Loading signals...</p>
+        <div className={styles.loading}>Loading signals…</div>
       ) : (
         <table className={styles.table}>
           <thead>
             <tr>
-              <th>S/NO</th>
-              <th>TOKEN (NAME)</th>
-              <th>SIGNAL</th>
+              {columns.map((c) => (
+                <th
+                  key={c.key}
+                  onClick={() => {
+                    if (sortKey === c.key) setAsc(!asc);
+                    else {
+                      setSortKey(c.key);
+                      setAsc(true);
+                    }
+                  }}
+                  className={styles.sortableHeader}
+                >
+                  {c.label} {sortKey === c.key ? (asc ? "↑" : "↓") : "↕"}
+                </th>
+              ))}
             </tr>
           </thead>
           <tbody>
-            {tokens.length > 0 ? (
-              tokens.map((t, index) => (
-                <tr key={t.symbol || index}>
-                  <td>{index + 1}</td>
-                  <td>{t.symbol}</td>
-                  <td className={getSignalClass(t.signal)}>{t.signal}</td>
+            {sorted.length ? (
+              sorted.map((row, i) => (
+                <tr key={row.symbol}>
+                  <td>{row.sNo}</td>
+                  <td>{row.symbol}</td>
+                  <td>{row.rsi}</td>
+                  <td className={getCls(row.signal)}>{row.signal}</td>
                 </tr>
               ))
             ) : (
               <tr>
-                <td colSpan="3" style={{ textAlign: "center", padding: "1rem" }}>
-                  No signals to display.
+                <td colSpan="4" style={{ textAlign: "center", padding: "1rem" }}>
+                  No signals
                 </td>
               </tr>
             )}
