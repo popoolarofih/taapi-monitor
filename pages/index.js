@@ -9,23 +9,22 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const fetchSignals = async () => {
-    try {
-      setLoading(true);
-      const res = await fetch("/api/signals");
-      const data = await res.json();
+  try {
+    const res = await fetch("/api/signals");
+    const data = await res.json();
 
-      if (!Array.isArray(data)) throw new Error("Invalid response format");
-      setTokens(data);
-      setLastUpdate(new Date().toLocaleTimeString());
-      setError("");
-    } catch (err) {
-      console.error("Failed to fetch signals:", err);
-      setError("Error loading signals.");
-    } finally {
-      setLoading(false);
-      setCountdown(30);
+    if (!Array.isArray(data)) {
+      console.error("Invalid response format:", data);
+      return;
     }
-  };
+
+    setTokens(data);
+    setLastUpdate(new Date().toLocaleTimeString());
+  } catch (err) {
+    console.error("Failed to fetch signals:", err);
+  }
+};
+
 
   const fetchLocation = async () => {
     try {
