@@ -23,7 +23,7 @@
 
 .meta {
   display: flex;
-  gap: 1.5rem;
+  gap: 1rem;
   flex-wrap: wrap;
   font-size: 0.9rem;
   color: #374151;
