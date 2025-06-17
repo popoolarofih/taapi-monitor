@@ -5,91 +5,95 @@ export default function Home() {
   const [tokens, setTokens] = useState([]);
   const [lastUpdate, setLastUpdate] = useState("");
   const [countdown, setCountdown] = useState(30);
-  const [location, setLocation] = useState("…");
+  const [location, setLocation] = useState("Locating...");
   const [loading, setLoading] = useState(true);
-
+  const [error, setError] = useState("");
   const fetchSignals = async () => {
-    setLoading(true);
     try {
+      setLoading(true);
       const res = await fetch("/api/signals");
       const data = await res.json();
+
+      if (!Array.isArray(data)) throw new Error("Invalid response format");
       setTokens(data);
       setLastUpdate(new Date().toLocaleTimeString());
-      setCountdown(30);
+      setError("");
     } catch (err) {
       console.error("Failed to fetch signals:", err);
+      setError("Error loading signals.");
     } finally {
       setLoading(false);
+      setCountdown(30);
+    }
+  };
+
+  const fetchLocation = async () => {
+    try {
+      const res = await fetch("https://ipapi.co/json/");
+      const data = await res.json();
+      setLocation(`${data.city}, ${data.country_name}`);
+    } catch {
+      setLocation("Location unavailable");
     }
   };
 
   useEffect(() => {
     fetchSignals();
+    fetchLocation();
+
     const interval = setInterval(fetchSignals, 30000);
-    return () => clearInterval(interval);
-  }, []);
-
-  useEffect(() => {
-    const id = setInterval(() => {
-      setCountdown((c) => (c > 0 ? c - 1 : 30));
+    const countdownInterval = setInterval(() => {
+      setCountdown((prev) => (prev > 0 ? prev - 1 : 30));
     }, 1000);
-    return () => clearInterval(id);
-  }, []);
 
-  useEffect(() => {
-    // IP-based location (no permission dialog)
-    fetch("https://ip-api.com/json/?fields=city,country")
-      .then((r) => r.json())
-      .then((d) => setLocation(`${d.city}, ${d.country}`))
-      .catch(() => setLocation("Unknown"));
+    return () => {
+      clearInterval(interval);
+      clearInterval(countdownInterval);
+    };
   }, []);
 
   const getSignalClass = (signal) => {
     if (signal === "Buy") return styles.signalBuy;
     if (signal === "Sell") return styles.signalSell;
-    if (signal.startsWith("Exit")) return styles.signalExit;
+    if (signal === "Exit Buy" || signal === "Exit Sell")
+      return styles.signalExit;
     return styles.signalHold;
   };
 
   return (
-    <div className={styles.layout}>
-      <header className={styles.header}>
-        <h1 className={styles.title}>Most Volatile — Binance</h1>
+    <div className={styles.container}>
+      <div className={styles.header}>
+        <h1 className={styles.title}>Most Volatile Binance</h1>
         <div className={styles.meta}>
-          <span>Last update:</span> <strong>{lastUpdate}</strong>
-          {" · "}
-          <span>Refreshing in:</span> <strong>{countdown}s</strong>
-          {" · "}
-          <span>Your location:</span> <strong>{location}</strong>
+          <p>Next update in: {countdown}s</p>
+          <p>Last updated: {lastUpdate || "..."}</p>
+          <p>User Location: {location}</p>
         </div>
-      </header>
-
-      <div className={styles.tableWrapper}>
-        {loading ? (
-          <div className={styles.loading}>Loading…</div>
-        ) : (
-          <table className={styles.tokenTable}>
-            <thead>
-              <tr>
-                <th>S/NO</th>
-                <th>SYMBOL</th>
-                <th>RSI</th>
-                <th>SIGNAL</th>
-              </tr>
-            </thead>
-            <tbody>
-              {tokens.map((t) => (
-                <tr key={t.symbol}>
-                  <td>{t.sNo}</td>
-                  <td>{t.symbol}</td>
-                  <td>{t.rsi.toFixed(1)}</td>
-                  <td className={getSignalClass(t.signal)}>{t.signal}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
       </div>
+
+      {error && <p className={styles.error}>{error}</p>}
+      {loading ? (
+        <p className={styles.loading}>Loading signals...</p>
+      ) : (
+        <table className={styles.table}>
+          <thead>
+            <tr>
+              <th>S/NO</th>
+              <th>TOKEN (NAME)</th>
+              <th>SIGNAL</th>
+            </tr>
+          </thead>
+          <tbody>
+            {tokens.map((t, index) => (
+              <tr key={t.symbol || index}>
+                <td>{index + 1}</td>
+                <td>{t.name}</td>
+                <td className={getSignalClass(t.signal)}>{t.signal}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
     </div>
   );
 }
