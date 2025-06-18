@@ -5,7 +5,7 @@ const SECRET = process.env.TAAPI_SECRET;
 const CHUNK_SIZE = 10;
 const MAX_PARALLEL = 5;
 const MAX_RETRIES = 5;
-const PAUSE_BETWEEN_GROUPS_MS = 1000; // 1 second throttle
+const PAUSE_BETWEEN_GROUPS_MS = 1000;
 
 let lastRsi = {};
 
@@ -44,7 +44,7 @@ async function fetchBatch(batch, attempt = 0) {
     }));
   } catch (err) {
     if (err.response?.status === 429 && attempt < MAX_RETRIES) {
-      const wait = parseRetryAfter(err.response.headers["retry-after"]) || (2 ** attempt) * 1000;
+      const wait = parseRetryAfter(err.response.headers["retry-after"]) || 2 ** attempt * 1000;
       await new Promise((r) => setTimeout(r, wait));
       return fetchBatch(batch, attempt + 1);
     }
@@ -68,9 +68,8 @@ export default async function handler(req, res) {
         const key = token.symbol;
         const prev = lastRsi[key];
         let signal = rsi < 30 ? "Buy" : rsi > 70 ? "Sell" : "Hold";
-        if (prev != null) {
-          if (prev < 30 && rsi >= 30) signal = "Exit Buy";
-          else if (prev > 70 && rsi <= 70) signal = "Exit Sell";
+        if (prev != null && ((prev < 30 && rsi >= 30) || (prev > 70 && rsi <= 70))) {
+          signal = "Exit";
         }
         lastRsi[key] = rsi;
         results.push({
@@ -84,7 +83,6 @@ export default async function handler(req, res) {
       await new Promise((r) => setTimeout(r, PAUSE_BETWEEN_GROUPS_MS));
     }
 
-    // Sort by RSI ascending, assign sNo
     const sorted = results
       .sort((a, b) => a.rsi - b.rsi)
       .map((item, idx) => ({ ...item, sNo: idx + 1 }));
