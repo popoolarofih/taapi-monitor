@@ -10,18 +10,18 @@ async function main() {
   }
 
   try {
-    const res = await axios.get(
-      "https://api.taapi.io/exchange-symbols",
-      {
-        params: {
-          secret: process.env.TAAPI_SECRET,
-          exchange: "binance",
-        },
-      }
-    );
+    const res = await axios.get("https://api.taapi.io/exchange-symbols", {
+      params: {
+        secret: process.env.TAAPI_SECRET,
+        exchange: "binance",
+      },
+    });
 
     const symbols = res.data;
-    const formatted = symbols.map((symbol) => ({
+    // Filter for only USDT pairs
+    const usdtSymbols = symbols.filter((s) => s.endsWith("/USDT"));
+
+    const formatted = usdtSymbols.map((symbol) => ({
       symbol,
       name: symbol.split("/")[0],
     }));
@@ -31,7 +31,7 @@ async function main() {
       "module.exports = " + JSON.stringify(formatted, null, 2) + ";\n"
     );
 
-    console.log(`✅ Saved ${formatted.length} tokens to utils/tokens.js`);
+    console.log(`✅ Saved ${formatted.length} USDT tokens to utils/tokens.js`);
   } catch (err) {
     console.error("❌ Failed to fetch tokens:", err.response?.data || err.message);
     process.exit(1);

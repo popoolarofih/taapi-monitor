@@ -1,46 +1,83 @@
 import axios from "axios";
+import tokens from "../../utils/tokens";
 
 const SECRET = process.env.TAAPI_SECRET;
-const MAX_SYMBOLS = 10;
+const CHUNK_SIZE = 10;
+const MAX_PARALLEL = 5;
 
-export default async function handler(req, res) {
-  if (!SECRET) return res.status(500).json({ error: "TAAPI_SECRET is missing" });
+let lastRsi = {}; // Holds previous RSI values across calls
 
+function chunkArray(arr, size) {
+  const chunks = [];
+  for (let i = 0; i < arr.length; i += size) {
+    chunks.push(arr.slice(i, i + size));
+  }
+  return chunks;
+}
+
+async function fetchBatch(batch, attempt = 0) {
   try {
-    const { data: symbols } = await axios.get("https://api.taapi.io/exchange-symbols", {
-      params: { secret: SECRET, exchange: "binance" },
-    });
-    const top = symbols.slice(0, MAX_SYMBOLS);
-
-    const constructs = top.map((symbol) => ({
+    const constructs = batch.map((t) => ({
       exchange: "binance",
-      symbol,
+      symbol: t.symbol,
       interval: "1h",
       indicators: [{ indicator: "rsi" }],
     }));
-
-    const { data: bulkRes } = await axios.post("https://api.taapi.io/bulk", {
+    const res = await axios.post("https://api.taapi.io/bulk", {
       secret: SECRET,
       construct: constructs,
     });
+    return res.data.data.map((d, idx) => ({
+      token: batch[idx],
+      rsi: d.result?.value,
+    }));
+  } catch (err) {
+    const status = err.response?.status;
+    if (status === 429 && attempt < 5) {
+      const backoff = err.response.headers["retry-after"]
+        ? parseInt(err.response.headers["retry-after"], 10) * 1000
+        : 2 ** attempt * 1000;
+      await new Promise((r) => setTimeout(r, backoff));
+      return fetchBatch(batch, attempt + 1);
+    }
+    throw err;
+  }
+}
 
-    const results = bulkRes.data
-      .filter((d) => d.result && typeof d.result.value === "number")
-      .map((d, i) => {
-        const rsi = d.result.value;
-        const prev = constructs[i].prev;
+export default async function handler(req, res) {
+  if (!SECRET) {
+    return res.status(500).json({ error: "TAAPI_SECRET missing" });
+  }
+
+  try {
+    const chunks = chunkArray(tokens, CHUNK_SIZE);
+    const results = [];
+
+    for (let i = 0; i < chunks.length; i += MAX_PARALLEL) {
+      const parallel = chunks.slice(i, i + MAX_PARALLEL).map(fetchBatch);
+      const responses = await Promise.all(parallel);
+      responses.flat().forEach(({ token, rsi }) => {
+        if (typeof rsi !== "number") return;
+        const prev = lastRsi[token.symbol];
         let signal = rsi < 30 ? "Buy" : rsi > 70 ? "Sell" : "Hold";
         if (prev != null) {
           if (prev < 30 && rsi >= 30) signal = "Exit Buy";
           if (prev > 70 && rsi <= 70) signal = "Exit Sell";
         }
-        constructs[i].prev = rsi;
-        return { sNo: i + 1, symbol: top[i], rsi: +rsi.toFixed(2), signal };
+        lastRsi[token.symbol] = rsi;
+        results.push({
+          name: token.name,
+          symbol: token.symbol,
+          rsi: parseFloat(rsi.toFixed(2)),
+          signal,
+        });
       });
+      await new Promise((r) => setTimeout(r, 1000));
+    }
 
     res.status(200).json(results);
   } catch (err) {
-    console.error("API Error:", err.response?.data || err.message);
+    console.error("Bulk fetch error:", err.response?.data || err.message);
     res.status(500).json({ error: err.message });
   }
 }
