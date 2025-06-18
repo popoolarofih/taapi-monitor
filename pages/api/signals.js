@@ -4,8 +4,10 @@ import tokens from "../../utils/tokens";
 const SECRET = process.env.TAAPI_SECRET;
 const CHUNK_SIZE = 10;
 const MAX_PARALLEL = 5;
+const MAX_RETRIES = 5;
+const PAUSE_BETWEEN_GROUPS_MS = 1000; // 1 second throttle
 
-let lastRsi = {}; // Holds previous RSI values across calls
+let lastRsi = {};
 
 function chunkArray(arr, size) {
   const chunks = [];
@@ -13,6 +15,15 @@ function chunkArray(arr, size) {
     chunks.push(arr.slice(i, i + size));
   }
   return chunks;
+}
+
+function parseRetryAfter(header) {
+  if (!header) return null;
+  const num = parseInt(header);
+  if (!isNaN(num)) return num * 1000;
+  const date = new Date(header).getTime();
+  const now = Date.now();
+  return date > now ? date - now : null;
 }
 
 async function fetchBatch(batch, attempt = 0) {
@@ -27,17 +38,14 @@ async function fetchBatch(batch, attempt = 0) {
       secret: SECRET,
       construct: constructs,
     });
-    return res.data.data.map((d, idx) => ({
-      token: batch[idx],
+    return res.data.data.map((d, i) => ({
+      token: batch[i],
       rsi: d.result?.value,
     }));
   } catch (err) {
-    const status = err.response?.status;
-    if (status === 429 && attempt < 5) {
-      const backoff = err.response.headers["retry-after"]
-        ? parseInt(err.response.headers["retry-after"], 10) * 1000
-        : 2 ** attempt * 1000;
-      await new Promise((r) => setTimeout(r, backoff));
+    if (err.response?.status === 429 && attempt < MAX_RETRIES) {
+      const wait = parseRetryAfter(err.response.headers["retry-after"]) || (2 ** attempt) * 1000;
+      await new Promise((r) => setTimeout(r, wait));
       return fetchBatch(batch, attempt + 1);
     }
     throw err;
@@ -45,37 +53,43 @@ async function fetchBatch(batch, attempt = 0) {
 }
 
 export default async function handler(req, res) {
-  if (!SECRET) {
-    return res.status(500).json({ error: "TAAPI_SECRET missing" });
-  }
+  if (!SECRET) return res.status(500).json({ error: "Missing TAAPI_SECRET" });
 
   try {
     const chunks = chunkArray(tokens, CHUNK_SIZE);
     const results = [];
 
     for (let i = 0; i < chunks.length; i += MAX_PARALLEL) {
-      const parallel = chunks.slice(i, i + MAX_PARALLEL).map(fetchBatch);
-      const responses = await Promise.all(parallel);
+      const group = chunks.slice(i, i + MAX_PARALLEL);
+      const responses = await Promise.all(group.map(fetchBatch));
+
       responses.flat().forEach(({ token, rsi }) => {
         if (typeof rsi !== "number") return;
-        const prev = lastRsi[token.symbol];
+        const key = token.symbol;
+        const prev = lastRsi[key];
         let signal = rsi < 30 ? "Buy" : rsi > 70 ? "Sell" : "Hold";
         if (prev != null) {
           if (prev < 30 && rsi >= 30) signal = "Exit Buy";
-          if (prev > 70 && rsi <= 70) signal = "Exit Sell";
+          else if (prev > 70 && rsi <= 70) signal = "Exit Sell";
         }
-        lastRsi[token.symbol] = rsi;
+        lastRsi[key] = rsi;
         results.push({
           name: token.name,
-          symbol: token.symbol,
-          rsi: parseFloat(rsi.toFixed(2)),
+          symbol: key,
+          rsi: +rsi.toFixed(2),
           signal,
         });
       });
-      await new Promise((r) => setTimeout(r, 1000));
+
+      await new Promise((r) => setTimeout(r, PAUSE_BETWEEN_GROUPS_MS));
     }
 
-    res.status(200).json(results);
+    // Sort by RSI ascending, assign sNo
+    const sorted = results
+      .sort((a, b) => a.rsi - b.rsi)
+      .map((item, idx) => ({ ...item, sNo: idx + 1 }));
+
+    res.status(200).json(sorted);
   } catch (err) {
     console.error("Bulk fetch error:", err.response?.data || err.message);
     res.status(500).json({ error: err.message });
