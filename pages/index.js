@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useMemo } from "react";
 import styles from "../styles/Home.module.css";
 
 const columns = [
@@ -61,16 +61,16 @@ export default function Home() {
       ? styles.signalExit
       : styles.signalHold;
 
-  const sortData = () =>
-    [...data].sort((a, b) => {
+  const sortedWithIndex = useMemo(() => {
+    const sorted = [...data].sort((a, b) => {
       const v1 = a[sortKey];
       const v2 = b[sortKey];
       if (v1 < v2) return asc ? -1 : 1;
       if (v1 > v2) return asc ? 1 : -1;
       return 0;
     });
-
-  const sorted = sortData();
+    return sorted.map((item, idx) => ({ ...item, sNo: idx + 1 }));
+  }, [data, sortKey, asc]);
 
   return (
     <div className={styles.container}>
@@ -82,7 +82,9 @@ export default function Home() {
           <p>User Location: {loc}</p>
         </div>
       </div>
+
       {error && <div className={styles.error}>{error}</div>}
+
       {loading ? (
         <div className={styles.loading}>Loading signals…</div>
       ) : (
@@ -107,8 +109,8 @@ export default function Home() {
             </tr>
           </thead>
           <tbody>
-            {sorted.length ? (
-              sorted.map((row, i) => (
+            {sortedWithIndex.length ? (
+              sortedWithIndex.map((row) => (
                 <tr key={row.symbol}>
                   <td>{row.sNo}</td>
                   <td>{row.symbol}</td>
